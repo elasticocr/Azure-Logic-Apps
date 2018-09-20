@@ -1,1 +1,405 @@
-{"$schema":"https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#","contentVersion":"1.0.0.0","parameters":{"logicAppName":{"type":"String","metadata":{"description":"Name of the logic app."}},"logicAppLocation":{"defaultValue":"[resourceGroup().location]","allowedValues":["eastasia","southeastasia","centralus","eastus","eastus2","westus","northcentralus","southcentralus","northeurope","westeurope","japanwest","japaneast","brazilsouth","australiaeast","australiasoutheast","southindia","centralindia","westindia","canadacentral","canadaeast","westcentralus","westus2","[resourceGroup().location]"],"type":"String","metadata":{"description":"Location of the logic app."}},"elasticocr_1_Connection_Name":{"defaultValue":"elasticocr_1","type":"String","metadata":{"description":"Name of the connection."}},"onedriveforbusiness_Connection_Name":{"defaultValue":"onedriveforbusiness","type":"String","metadata":{"description":"Name of the connection."}},"office365_Connection_Name":{"defaultValue":"office365","type":"String","metadata":{"description":"Name of the connection."}}},"resources":[{"type":"Microsoft.Logic/workflows","name":"[parameters('logicAppName')]","apiVersion":"2016-06-01","location":"[parameters('logicAppLocation')]","properties":{"state":"Disabled","definition":{"$schema":"https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#","contentVersion":"1.0.0.0","parameters":{"$connections":{"defaultValue":{},"type":"Object"},"$authentication":{"defaultValue":{},"type":"SecureObject"}},"triggers":{"When_a_new_email_arrives":{"recurrence":{"interval":1,"frequency":"Minute"},"splitOn":"@triggerBody()?['value']","metadata":{"flowSystemMetadata":{"swaggerOperationId":"OnNewEmail"}},"type":"ApiConnection","inputs":{"host":{"connection":{"name":"@parameters('$connections')['office365']['connectionId']"}},"method":"get","path":"/Mail/OnNewEmail","queries":{"folderPath":"Inbox","importance":"Any","fetchOnlyWithAttachment":true,"includeAttachments":true},"authentication":"@parameters('$authentication')"}}},"actions":{"Apply_to_each":{"foreach":"@triggerBody()?['Attachments']","actions":{"Only_process_PDF_attachments":{"actions":{"Create_a_job_with_a_file":{"runAfter":{},"metadata":{"flowSystemMetadata":{"swaggerOperationId":"CreateJobWithFile"}},"type":"ApiConnection","inputs":{"host":{"connection":{"name":"@parameters('$connections')['elasticocr_1']['connectionId']"}},"method":"put","body":"@base64ToBinary(items('Apply_to_each')?['ContentBytes'])","headers":{"filename":"@items('Apply_to_each')?['Name']"},"path":"/v1.0/jobs","authentication":"@parameters('$authentication')"}},"Wait_until_job_has_been_processed_and_becomes_available":{"actions":{"Retrieve_a_job":{"runAfter":{"Delay":["Succeeded"]},"metadata":{"flowSystemMetadata":{"swaggerOperationId":"GetJob"}},"type":"ApiConnection","inputs":{"host":{"connection":{"name":"@parameters('$connections')['elasticocr_1']['connectionId']"}},"method":"get","path":"/v1.0/jobs/@{encodeURIComponent(body('Create_a_job_with_a_file')?['id'])}","authentication":"@parameters('$authentication')"}},"Delay":{"runAfter":{},"type":"Wait","inputs":{"interval":{"count":5,"unit":"Minute"}}}},"runAfter":{"Create_a_job_with_a_file":["Succeeded"]},"expression":"@equals(body('Retrieve_a_job')?['status'], 'Available')","limit":{"count":240,"timeout":"PT1H"},"type":"Until"},"Download_a_job":{"runAfter":{"Wait_until_job_has_been_processed_and_becomes_available":["Succeeded"]},"metadata":{"flowSystemMetadata":{"swaggerOperationId":"DownloadJob"}},"type":"ApiConnection","inputs":{"host":{"connection":{"name":"@parameters('$connections')['elasticocr_1']['connectionId']"}},"method":"get","path":"/v1.0/jobs/download/@{encodeURIComponent(body('Create_a_job_with_a_file')?['id'])}","authentication":"@parameters('$authentication')"}},"Store_completed_file_in_OneDrive_for_Business":{"runAfter":{"Download_a_job":["Succeeded"]},"metadata":{"flowSystemMetadata":{"swaggerOperationId":"CreateFile"}},"type":"ApiConnection","inputs":{"host":{"connection":{"name":"@parameters('$connections')['onedriveforbusiness']['connectionId']"}},"method":"post","body":"@body('Download_a_job')","path":"/datasets/default/files","queries":{"folderPath":"@variables('Folder Path')","name":"@body('Retrieve_a_job')?['filename']"},"authentication":"@parameters('$authentication')"},"runtimeConfiguration":{"contentTransfer":{"transferMode":"Chunked"}}},"Create_share_link_by_path":{"runAfter":{"Store_completed_file_in_OneDrive_for_Business":["Succeeded"]},"metadata":{"flowSystemMetadata":{"swaggerOperationId":"CreateShareLinkByPath"}},"type":"ApiConnection","inputs":{"host":{"connection":{"name":"@parameters('$connections')['onedriveforbusiness']['connectionId']"}},"method":"post","path":"/datasets/default/CreateShareLinkByPath","queries":{"path":"@{variables('Folder Path')}/@{body('Retrieve_a_job')?['filename']}","type":"View","scope":"Organization"},"authentication":"@parameters('$authentication')"}},"Complete_a_job":{"runAfter":{"Create_share_link_by_path":["Succeeded"]},"metadata":{"flowSystemMetadata":{"swaggerOperationId":"CompleteJob"}},"type":"ApiConnection","inputs":{"host":{"connection":{"name":"@parameters('$connections')['elasticocr_1']['connectionId']"}},"method":"post","path":"/v1.0/jobs/complete/@{encodeURIComponent(body('Create_a_job_with_a_file')?['id'])}","authentication":"@parameters('$authentication')"}}},"runAfter":{},"expression":"@equals(items('Apply_to_each')?['ContentType'], 'application/pdf')","type":"If"}},"runAfter":{"Generate_and_store_the_folder_path_for_OneDrive":["Succeeded"]},"type":"Foreach"},"Generate_and_store_the_folder_path_for_OneDrive":{"runAfter":{},"type":"InitializeVariable","inputs":{"variables":[{"name":"Folder Path","type":"String","value":"Email Attachments/@{formatDateTime(utcNow(),'yyyy-MM-dd')}"}]}}},"description":"This Flow processes all PDF files received as email attachments and stores the completed OCR'd versions in OneDrive for Business."},"parameters":{"$connections":{"value":{"elasticocr_1":{"id":"[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', parameters('logicAppLocation'), '/managedApis/', 'elasticocr_1')]","connectionId":"[resourceId('Microsoft.Web/connections', parameters('elasticocr_1_Connection_Name'))]","connectionName":"[parameters('elasticocr_1_Connection_Name')]"},"onedriveforbusiness":{"id":"[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', parameters('logicAppLocation'), '/managedApis/', 'onedriveforbusiness')]","connectionId":"[resourceId('Microsoft.Web/connections', parameters('onedriveforbusiness_Connection_Name'))]","connectionName":"[parameters('onedriveforbusiness_Connection_Name')]"},"office365":{"id":"[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', parameters('logicAppLocation'), '/managedApis/', 'office365')]","connectionId":"[resourceId('Microsoft.Web/connections', parameters('office365_Connection_Name'))]","connectionName":"[parameters('office365_Connection_Name')]"}}}},"runtimeConfiguration":{"collections":{"maximumItemCount":100000},"performanceProfile":{"throttles":{"mode":"Medium"}}}},"dependsOn":["[resourceId('Microsoft.Web/connections', parameters('elasticocr_1_Connection_Name'))]","[resourceId('Microsoft.Web/connections', parameters('onedriveforbusiness_Connection_Name'))]","[resourceId('Microsoft.Web/connections', parameters('office365_Connection_Name'))]"]},{"type":"Microsoft.Web/connections","name":"[parameters('elasticocr_1_Connection_Name')]","apiVersion":"2016-06-01","location":"[parameters('logicAppLocation')]","properties":{"api":{"id":"[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', parameters('logicAppLocation'), '/managedApis/', 'elasticocr_1')]"},"displayName":"[parameters('elasticocr_1_Connection_Name')]"}},{"type":"Microsoft.Web/connections","name":"[parameters('onedriveforbusiness_Connection_Name')]","apiVersion":"2016-06-01","location":"[parameters('logicAppLocation')]","properties":{"api":{"id":"[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', parameters('logicAppLocation'), '/managedApis/', 'onedriveforbusiness')]"},"displayName":"[parameters('onedriveforbusiness_Connection_Name')]"}},{"type":"Microsoft.Web/connections","name":"[parameters('office365_Connection_Name')]","apiVersion":"2016-06-01","location":"[parameters('logicAppLocation')]","properties":{"api":{"id":"[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', parameters('logicAppLocation'), '/managedApis/', 'office365')]"},"displayName":"[parameters('office365_Connection_Name')]"}}]}
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "logicAppName": {
+            "type": "String",
+            "metadata": {
+                "description": "Name of the logic app."
+            }
+        },
+        "logicAppLocation": {
+            "defaultValue": "[resourceGroup().location]",
+            "allowedValues": [
+                "eastasia",
+                "southeastasia",
+                "centralus",
+                "eastus",
+                "eastus2",
+                "westus",
+                "northcentralus",
+                "southcentralus",
+                "northeurope",
+                "westeurope",
+                "japanwest",
+                "japaneast",
+                "brazilsouth",
+                "australiaeast",
+                "australiasoutheast",
+                "southindia",
+                "centralindia",
+                "westindia",
+                "canadacentral",
+                "canadaeast",
+                "westcentralus",
+                "westus2",
+                "[resourceGroup().location]"
+            ],
+            "type": "String",
+            "metadata": {
+                "description": "Location of the logic app."
+            }
+        },
+        "elasticocr_Connection_Name": {
+            "defaultValue": "ElasticOCR",
+            "type": "String",
+            "metadata": {
+                "description": "Name of the connection."
+            }
+        },
+        "onedriveforbusiness_Connection_Name": {
+            "defaultValue": "OneDriveForBusiness",
+            "type": "String",
+            "metadata": {
+                "description": "Name of the connection."
+            }
+        },
+        "office365_Connection_Name": {
+            "defaultValue": "Office365",
+            "type": "String",
+            "metadata": {
+                "description": "Name of the connection."
+            }
+        }
+    },
+    "resources": [
+        {
+            "type": "Microsoft.Logic/workflows",
+            "name": "[parameters('logicAppName')]",
+            "apiVersion": "2016-06-01",
+            "location": "[parameters('logicAppLocation')]",
+            "properties": {
+                "state": "Disabled",
+                "definition": {
+                    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+                    "contentVersion": "1.0.0.0",
+                    "parameters": {
+                        "$connections": {
+                            "defaultValue": {},
+                            "type": "Object"
+                        },
+                        "$authentication": {
+                            "defaultValue": {},
+                            "type": "SecureObject"
+                        }
+                    },
+                    "triggers": {
+                        "When_a_new_email_arrives": {
+                            "recurrence": {
+                                "interval": 1,
+                                "frequency": "Minute"
+                            },
+                            "splitOn": "@triggerBody()?['value']",
+                            "metadata": {
+                                "flowSystemMetadata": {
+                                    "swaggerOperationId": "OnNewEmail"
+                                }
+                            },
+                            "type": "ApiConnection",
+                            "inputs": {
+                                "host": {
+                                    "connection": {
+                                        "name": "@parameters('$connections')['office365']['connectionId']"
+                                    }
+                                },
+                                "method": "get",
+                                "path": "/Mail/OnNewEmail",
+                                "queries": {
+                                    "folderPath": "Inbox",
+                                    "importance": "Any",
+                                    "fetchOnlyWithAttachment": true,
+                                    "includeAttachments": true
+                                },
+                                "authentication": "@parameters('$authentication')"
+                            }
+                        }
+                    },
+                    "actions": {
+                        "Apply_to_each": {
+                            "foreach": "@triggerBody()?['Attachments']",
+                            "actions": {
+                                "Only_process_PDF_attachments": {
+                                    "actions": {
+                                        "Create_a_job_with_a_file": {
+                                            "runAfter": {},
+                                            "metadata": {
+                                                "flowSystemMetadata": {
+                                                    "swaggerOperationId": "CreateJobWithFile"
+                                                }
+                                            },
+                                            "type": "ApiConnection",
+                                            "inputs": {
+                                                "host": {
+                                                    "connection": {
+                                                        "name": "@parameters('$connections')['elasticocr']['connectionId']"
+                                                    }
+                                                },
+                                                "method": "put",
+                                                "body": "@base64ToBinary(items('Apply_to_each')?['ContentBytes'])",
+                                                "headers": {
+                                                    "filename": "@items('Apply_to_each')?['Name']"
+                                                },
+                                                "path": "/v1.0/jobs",
+                                                "authentication": "@parameters('$authentication')"
+                                            }
+                                        },
+                                        "Wait_until_job_has_been_processed_and_becomes_available": {
+                                            "actions": {
+                                                "Retrieve_a_job": {
+                                                    "runAfter": {
+                                                        "Delay": [
+                                                            "Succeeded"
+                                                        ]
+                                                    },
+                                                    "metadata": {
+                                                        "flowSystemMetadata": {
+                                                            "swaggerOperationId": "GetJob"
+                                                        }
+                                                    },
+                                                    "type": "ApiConnection",
+                                                    "inputs": {
+                                                        "host": {
+                                                            "connection": {
+                                                                "name": "@parameters('$connections')['elasticocr']['connectionId']"
+                                                            }
+                                                        },
+                                                        "method": "get",
+                                                        "path": "/v1.0/jobs/@{encodeURIComponent(body('Create_a_job_with_a_file')?['id'])}",
+                                                        "authentication": "@parameters('$authentication')"
+                                                    }
+                                                },
+                                                "Delay": {
+                                                    "runAfter": {},
+                                                    "type": "Wait",
+                                                    "inputs": {
+                                                        "interval": {
+                                                            "count": 5,
+                                                            "unit": "Minute"
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                            "runAfter": {
+                                                "Create_a_job_with_a_file": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "expression": "@equals(body('Retrieve_a_job')?['status'], 'Available')",
+                                            "limit": {
+                                                "count": 240,
+                                                "timeout": "PT1H"
+                                            },
+                                            "type": "Until"
+                                        },
+                                        "Download_a_job": {
+                                            "runAfter": {
+                                                "Wait_until_job_has_been_processed_and_becomes_available": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "metadata": {
+                                                "flowSystemMetadata": {
+                                                    "swaggerOperationId": "DownloadJob"
+                                                }
+                                            },
+                                            "type": "ApiConnection",
+                                            "inputs": {
+                                                "host": {
+                                                    "connection": {
+                                                        "name": "@parameters('$connections')['elasticocr']['connectionId']"
+                                                    }
+                                                },
+                                                "method": "get",
+                                                "path": "/v1.0/jobs/download/@{encodeURIComponent(body('Create_a_job_with_a_file')?['id'])}",
+                                                "authentication": "@parameters('$authentication')"
+                                            }
+                                        },
+                                        "Store_completed_file_in_OneDrive_for_Business": {
+                                            "runAfter": {
+                                                "Download_a_job": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "metadata": {
+                                                "flowSystemMetadata": {
+                                                    "swaggerOperationId": "CreateFile"
+                                                }
+                                            },
+                                            "type": "ApiConnection",
+                                            "inputs": {
+                                                "host": {
+                                                    "connection": {
+                                                        "name": "@parameters('$connections')['onedriveforbusiness']['connectionId']"
+                                                    }
+                                                },
+                                                "method": "post",
+                                                "body": "@body('Download_a_job')",
+                                                "path": "/datasets/default/files",
+                                                "queries": {
+                                                    "folderPath": "@variables('Folder Path')",
+                                                    "name": "@body('Retrieve_a_job')?['filename']"
+                                                },
+                                                "authentication": "@parameters('$authentication')"
+                                            },
+                                            "runtimeConfiguration": {
+                                                "contentTransfer": {
+                                                    "transferMode": "Chunked"
+                                                }
+                                            }
+                                        },
+                                        "Create_share_link_by_path": {
+                                            "runAfter": {
+                                                "Store_completed_file_in_OneDrive_for_Business": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "metadata": {
+                                                "flowSystemMetadata": {
+                                                    "swaggerOperationId": "CreateShareLinkByPath"
+                                                }
+                                            },
+                                            "type": "ApiConnection",
+                                            "inputs": {
+                                                "host": {
+                                                    "connection": {
+                                                        "name": "@parameters('$connections')['onedriveforbusiness']['connectionId']"
+                                                    }
+                                                },
+                                                "method": "post",
+                                                "path": "/datasets/default/CreateShareLinkByPath",
+                                                "queries": {
+                                                    "path": "@{variables('Folder Path')}/@{body('Retrieve_a_job')?['filename']}",
+                                                    "type": "View",
+                                                    "scope": "Organization"
+                                                },
+                                                "authentication": "@parameters('$authentication')"
+                                            }
+                                        },
+                                        "Complete_a_job": {
+                                            "runAfter": {
+                                                "Create_share_link_by_path": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "metadata": {
+                                                "flowSystemMetadata": {
+                                                    "swaggerOperationId": "CompleteJob"
+                                                }
+                                            },
+                                            "type": "ApiConnection",
+                                            "inputs": {
+                                                "host": {
+                                                    "connection": {
+                                                        "name": "@parameters('$connections')['elasticocr']['connectionId']"
+                                                    }
+                                                },
+                                                "method": "post",
+                                                "path": "/v1.0/jobs/complete/@{encodeURIComponent(body('Create_a_job_with_a_file')?['id'])}",
+                                                "authentication": "@parameters('$authentication')"
+                                            }
+                                        }
+                                    },
+                                    "runAfter": {},
+                                    "expression": "@equals(items('Apply_to_each')?['ContentType'], 'application/pdf')",
+                                    "type": "If"
+                                }
+                            },
+                            "runAfter": {
+                                "Generate_and_store_the_folder_path_for_OneDrive": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Foreach"
+                        },
+                        "Generate_and_store_the_folder_path_for_OneDrive": {
+                            "runAfter": {},
+                            "type": "InitializeVariable",
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "Folder Path",
+                                        "type": "String",
+                                        "value": "Email Attachments/@{formatDateTime(utcNow(),'yyyy-MM-dd')}"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "description": "This Flow processes all PDF files received as email attachments and stores the completed OCR'd versions in OneDrive for Business."
+                },
+                "parameters": {
+                    "$connections": {
+                        "value": {
+                            "elasticocr": {
+                                "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', parameters('logicAppLocation'), '/managedApis/', 'elasticocr')]",
+                                "connectionId": "[resourceId('Microsoft.Web/connections', parameters('elasticocr_Connection_Name'))]",
+                                "connectionName": "[parameters('elasticocr_Connection_Name')]"
+                            },
+                            "onedriveforbusiness": {
+                                "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', parameters('logicAppLocation'), '/managedApis/', 'onedriveforbusiness')]",
+                                "connectionId": "[resourceId('Microsoft.Web/connections', parameters('onedriveforbusiness_Connection_Name'))]",
+                                "connectionName": "[parameters('onedriveforbusiness_Connection_Name')]"
+                            },
+                            "office365": {
+                                "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', parameters('logicAppLocation'), '/managedApis/', 'office365')]",
+                                "connectionId": "[resourceId('Microsoft.Web/connections', parameters('office365_Connection_Name'))]",
+                                "connectionName": "[parameters('office365_Connection_Name')]"
+                            }
+                        }
+                    }
+                },
+                "runtimeConfiguration": {
+                    "collections": {
+                        "maximumItemCount": 100000
+                    },
+                    "performanceProfile": {
+                        "throttles": {
+                            "mode": "Medium"
+                        }
+                    }
+                }
+            },
+            "dependsOn": [
+                "[resourceId('Microsoft.Web/connections', parameters('elasticocr_Connection_Name'))]",
+                "[resourceId('Microsoft.Web/connections', parameters('onedriveforbusiness_Connection_Name'))]",
+                "[resourceId('Microsoft.Web/connections', parameters('office365_Connection_Name'))]"
+            ]
+        },
+        {
+            "type": "Microsoft.Web/connections",
+            "name": "[parameters('elasticocr_Connection_Name')]",
+            "apiVersion": "2016-06-01",
+            "location": "[parameters('logicAppLocation')]",
+            "properties": {
+                "api": {
+                    "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', parameters('logicAppLocation'), '/managedApis/', 'elasticocr')]"
+                },
+                "displayName": "[parameters('elasticocr_Connection_Name')]"
+            }
+        },
+        {
+            "type": "Microsoft.Web/connections",
+            "name": "[parameters('onedriveforbusiness_Connection_Name')]",
+            "apiVersion": "2016-06-01",
+            "location": "[parameters('logicAppLocation')]",
+            "properties": {
+                "api": {
+                    "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', parameters('logicAppLocation'), '/managedApis/', 'onedriveforbusiness')]"
+                },
+                "displayName": "[parameters('onedriveforbusiness_Connection_Name')]"
+            }
+        },
+        {
+            "type": "Microsoft.Web/connections",
+            "name": "[parameters('office365_Connection_Name')]",
+            "apiVersion": "2016-06-01",
+            "location": "[parameters('logicAppLocation')]",
+            "properties": {
+                "api": {
+                    "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', parameters('logicAppLocation'), '/managedApis/', 'office365')]"
+                },
+                "displayName": "[parameters('office365_Connection_Name')]"
+            }
+        }
+    ]
+}
